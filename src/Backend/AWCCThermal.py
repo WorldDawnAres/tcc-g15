@@ -1,14 +1,14 @@
 from typing import Optional, NewType
-from Backend.AWCCWmiWrapper import AWCCWmiWrapper
+from src.Backend.AWCCWmiWrapper import AWCCWmiWrapper
 from wmi import WMI # type: ignore
 
 class NoAWCCWMIClass(Exception):
     def __init__(self) -> None:
-        super().__init__("AWCC WMI class not found in the system")
+        super().__init__("系统中未找到AWCC WMI类")
 
 class CannotInstAWCCWMI(Exception):
     def __init__(self) -> None:
-        super().__init__("Couldn't instantiate AWCC WMI class")
+        super().__init__("无法实例化AWCC WMI类")
 
 class AWCCThermal:
     Mode = AWCCWmiWrapper.ThermalMode

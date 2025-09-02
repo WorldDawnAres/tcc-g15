@@ -1,6 +1,6 @@
 from typing import Tuple, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
-from GUI.AppColors import Colors
+from src.GUI.AppColors import Colors
 
 class QGaugeTrayIcon(QtGui.QPixmap):
     def __init__(self, tempColorLimits: Optional[Tuple[Tuple[int,int], Tuple[int,int]]]) -> None:

@@ -3,13 +3,13 @@ from enum import Enum
 from typing import Callable, Literal, Optional, Tuple, List
 from PySide6 import QtCore, QtGui, QtWidgets
 from windows_toasts import WindowsToaster, Toast, ToastDuration, ToastDisplayImage
-from Backend.AWCCThermal import AWCCThermal, NoAWCCWMIClass, CannotInstAWCCWMI
-from GUI.QRadioButtonSet import QRadioButtonSet
-from GUI.AppColors import Colors
-from GUI.ThermalUnitWidget import ThermalUnitWidget
-from GUI.QGaugeTrayIcon import QGaugeTrayIcon
-from GUI import HotKey
-from Backend.DetectHardware import DetectHardware
+from src.Backend.AWCCThermal import AWCCThermal, NoAWCCWMIClass, CannotInstAWCCWMI
+from src.GUI.QRadioButtonSet import QRadioButtonSet
+from src.GUI.AppColors import Colors
+from src.GUI.ThermalUnitWidget import ThermalUnitWidget
+from src.GUI.QGaugeTrayIcon import QGaugeTrayIcon
+from src.GUI import HotKey
+from src.Backend.DetectHardware import DetectHardware
 
 GUI_ICON = 'icons/gaugeIcon.png'
 
@@ -56,7 +56,7 @@ def confirm(title: str, message: str, options: Optional[Tuple[str, str]] = None,
 
     cbDontAskAgain = None
     if dontAskAgain:
-        cbDontAskAgain = QtWidgets.QCheckBox('Don\'t ask me again.', msg)
+        cbDontAskAgain = QtWidgets.QCheckBox('记住此选择', msg)
         msg.setCheckBox(cbDontAskAgain)
 
     return (msg.exec_() == QtWidgets.QMessageBox.Yes, cbDontAskAgain is not None and cbDontAskAgain.isChecked() or None)
@@ -77,6 +77,13 @@ class ThermalMode(Enum):
     Balanced = 'Balanced'
     G_Mode = 'G_Mode'
     Custom = 'Custom'
+
+# 用于显示的中文名称
+mode_display_names = {
+    'Balanced': '均衡模式',
+    'G Mode': 'G模式',
+    'Custom': '自定义模式'
+}
     
 class SettingsKey(Enum):
     Mode = "app/mode"
@@ -99,9 +106,9 @@ class TCC_GUI(QtWidgets.QWidget):
     FAILSAFE_GPU_TEMP = 85
     FAILSAFE_TRIGGER_DELAY_SEC = 8
     FAILSAFE_RESET_AFTER_TEMP_IS_OK_FOR_SEC = 60
-    APP_NAME = "Thermal Control Center for Dell G15"
+    APP_NAME = "Dell G15温度控制中心"
     APP_VERSION = "1.6.5"
-    APP_DESCRIPTION = "This app is an open-source replacement for Alienware Control Center "
+    APP_DESCRIPTION = "此应用程序是 Alienware Control Center 的开源替代品 "
     APP_URL = "github.com/AlexIII/tcc-g15"
 
     # Green to Yellow and Yellow to Red thresholds
@@ -142,33 +149,34 @@ class TCC_GUI(QtWidgets.QWidget):
         self.trayIcon = QGaugeTrayIcon((self.GPU_COLOR_LIMITS, self.CPU_COLOR_LIMITS))
         menu = QtWidgets.QMenu()
         # Mode switch
-        menu.addSection("Mode")
+        menu.addSection("模式")
         self._trayMenuModeSwitch = {} # Dict[ThermalMode, QtWidgets.QAction]
         for m in ThermalMode:
             modeAction = menu.addAction("-")
-            modeAction.triggered.connect(lambda _, m_value=m.value: self._modeSwitch.setChecked(m_value))
+            modeAction.triggered.connect(lambda checked=False, m_value=m.value: self._modeSwitch.setChecked(m_value))
             self._trayMenuModeSwitch[m.value] = modeAction
         # Settings
-        menu.addSection("Settings")
-        showAction = menu.addAction("Show")
+        menu.addSection("设置")
+        showAction = menu.addAction("显示")
         showAction.triggered.connect(self.showNormal)
-        addToAutorunAction = menu.addAction("Enable autorun")
+        addToAutorunAction = menu.addAction("启动自动运行")
         def autorunTaskRun(action: Literal['add', 'remove']) -> None:
             err = autorunTask(action)
             if err != 0 and action == 'add':
-                alert("Error", f"Failed to {action} autorun task. Error={err}", QtWidgets.QMessageBox.Icon.Critical)
+                alert("错误", f"{action} 自动运行任务失败。错误={err}", QtWidgets.QMessageBox.Icon.Critical)
             else:
-                alert("Success", f"Autorun on system startup {'Enabled' if action == 'add' else 'Disabled'}")
-            # When in minimized state, a wired bug causes the app to close if we won't touch some of the `self.show*()` methods
+                alert("成功", f"当前程序开机自启功能状态： {'开启' if action == 'add' else '禁用'}")
+            # 当窗口最小化时，需要先显示窗口再隐藏，以避免程序关闭的问题
             if self.isMinimized():
                 self.showMinimized()
+                self.showNormal()
                 self.hide()
         addToAutorunAction.triggered.connect(lambda: autorunTaskRun('add'))
-        removeFromAutorunAction = menu.addAction("Disable autorun")
+        removeFromAutorunAction = menu.addAction("禁用自动运行")
         removeFromAutorunAction.triggered.connect(lambda: autorunTaskRun('remove'))
-        restoreAction = menu.addAction("Restore Default")
+        restoreAction = menu.addAction("恢复默认设置")
         restoreAction.triggered.connect(self.clearAppSettings)
-        exitAction = menu.addAction("Exit")
+        exitAction = menu.addAction("退出")
         exitAction.triggered.connect(self.onExit)
         # Setup tray widget
         tray = QtWidgets.QSystemTrayIcon(self)
@@ -218,17 +226,18 @@ class TCC_GUI(QtWidgets.QWidget):
         lTherm.addWidget(self._thermalGPU)
         lTherm.addWidget(self._thermalCPU)
 
-        self._modeSwitch = QRadioButtonSet(None, None, list(map(lambda m: (m.name.replace('_', ' '), m.value), ThermalMode)))
+        # 使用全局定义的mode_display_names字典
+        self._modeSwitch = QRadioButtonSet(None, None, list(map(lambda m: (mode_display_names[m.name.replace('_', ' ')], m.value), ThermalMode)))
 
         # Fail-safe indicator
         failsafeIndicator = QtWidgets.QLabel()
         def updFailsafeIndicator() -> None:
             color = Colors.GREEN.value if self._failsafeOn else Colors.DARK_GREY.value
-            msg = "Normal"
+            msg = "正常"
             if self._failsafeTempIsHighTs > 0: # Fail-safe have tripped at some point in the past
                 color = Colors.YELLOW.value
                 timeStr = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self._failsafeTempIsHighTs))
-                msg = f"Last high temp at {timeStr}"
+                msg = f"上次高温时间：{timeStr}"
                 if self._failsafeTrippedPrevModeStr is not None: # Fail-safe is in tripped state now
                     color = Colors.RED.value
 
@@ -239,10 +248,10 @@ class TCC_GUI(QtWidgets.QWidget):
         # Fail-safe temp limits
         self._limitTempGPU = QtWidgets.QComboBox()
         self._limitTempGPU.addItems(list(map(lambda v: str(v), range(50, 91))))
-        self._limitTempGPU.setToolTip("Threshold GPU temp")
+        self._limitTempGPU.setToolTip("GPU温度阈值")
         self._limitTempCPU = QtWidgets.QComboBox()
         self._limitTempCPU.addItems(list(map(lambda v: str(v), range(50, 101))))
-        self._limitTempCPU.setToolTip("Threshold CPU temp")
+        self._limitTempCPU.setToolTip("CPU温度阈值")
         def onLimitGPUChange():
             val = self._limitTempGPU.currentText()
             if val.isdigit(): self.FAILSAFE_GPU_TEMP = int(val)
@@ -253,8 +262,8 @@ class TCC_GUI(QtWidgets.QWidget):
         self._limitTempCPU.currentIndexChanged.connect(onLimitCPUChange)
 
         # Fail-safe checkbox
-        self._failsafeCB = QtWidgets.QCheckBox("Fail-safe")
-        self._failsafeCB.setToolTip(f"Switch to G-mode (fans on max) when GPU temp reaches {self.FAILSAFE_GPU_TEMP}°C or CPU reaches {self.FAILSAFE_CPU_TEMP}°C")
+        self._failsafeCB = QtWidgets.QCheckBox("安全模式")
+        self._failsafeCB.setToolTip(f"启动后当GPU温度到达 {self.FAILSAFE_GPU_TEMP}°C或者CPU到达 {self.FAILSAFE_CPU_TEMP}°C启动G模式")
         def onFailsafeCB():
             self._failsafeOn = self._failsafeCB.isChecked()
             self._failsafeTempIsHighTs = 0
@@ -309,7 +318,9 @@ class TCC_GUI(QtWidgets.QWidget):
                 self._failsafeTrippedPrevModeStr = None # In case the mode was switched manually
             updFailsafeIndicator()
             for m in ThermalMode:
-                self._trayMenuModeSwitch[m.value].setText(f"{'•' if m.value == val else ' '} {m.name.replace('_', ' ')}")
+                mode_name = m.name.replace('_', ' ')
+                display_name = mode_display_names[mode_name]
+                self._trayMenuModeSwitch[m.value].setText(f"{'•' if m.value == val else ' '} {display_name}")
 
         self._modeSwitch.setChecked(ThermalMode.Balanced.value)
         onModeChange(ThermalMode.Balanced.value)
@@ -363,7 +374,9 @@ class TCC_GUI(QtWidgets.QWidget):
             self.trayIcon = self.trayIcon.resizeForScreen() or self.trayIcon
             self.trayIcon.update((gpuTemp, cpuTemp), self._modeSwitch.getChecked() == ThermalMode.G_Mode.value)
             tray.setIcon(self.trayIcon)
-            tray.setToolTip(f"GPU:    {gpuTemp} °C    {gpuRPM} RPM\nCPU:    {cpuTemp} °C    {cpuRPM} RPM\nMode:    {self._modeSwitch.getChecked().replace('_', ' ')}")
+            current_mode = self._modeSwitch.getChecked()
+            mode_display = mode_display_names[ThermalMode(current_mode).name.replace('_', ' ')]
+            tray.setToolTip(f"GPU:    {gpuTemp} °C    {gpuRPM} RPM\nCPU:    {cpuTemp} °C    {cpuRPM} RPM\n模式:    {mode_display}")
             
             # Periodically save app settings
             self._saveAppSettings()
@@ -389,7 +402,7 @@ class TCC_GUI(QtWidgets.QWidget):
         
         if minimizeOnClose is None:
             # minimizeOnClose is not set, prompt user
-            (toExit, dontAskAgain) = confirm("Exit", "Do you want to exit or minimize to tray?", ("Exit", "Minimize"), True)
+            (toExit, dontAskAgain) = confirm("Exit", "您要退出还是最小化到托盘？", ("退出", "最小化"), True)
             minimizeOnClose = not toExit
             if dontAskAgain:
                 self.settings.setValue(SettingsKey.MinimizeOnCloseFlag.value, minimizeOnClose)
@@ -434,12 +447,12 @@ class TCC_GUI(QtWidgets.QWidget):
         self._toasterMessageCurrentMode()
 
     def _toasterMessageCurrentMode(self, source: Optional[Literal['failsafe']] = None) -> None:
-        sourceStr = f" [Fail-safe]" if source == 'failsafe' else ""
+        sourceStr = " [安全模式]" if source == 'failsafe' else ""
         self.toasterMessage(
             [
-                self._modeSwitch.getChecked().replace('_', ' '),
+                mode_display_names[ThermalMode(self._modeSwitch.getChecked()).name.replace('_', ' ')],
                 f"GPU: {self._thermalGPU.getTemp()}°C, CPU: {self._thermalCPU.getTemp()}°C",
-                "Thermal mode changed" + sourceStr
+                "模式已更改" + sourceStr
             ],
             source != 'failsafe'
         )
@@ -487,7 +500,7 @@ class TCC_GUI(QtWidgets.QWidget):
         self._failsafeCB.setChecked(str(savedFailsafe).lower() == 'true')
 
     def clearAppSettings(self):
-        (isYes, _) = confirm("Reset to Default", "Do you want to reset all settings to default?", ("Reset", "Cancel"))
+        (isYes, _) = confirm("重置为默认值", "是否要将所有设置重置为默认值？", ("重置", "取消"))
         if not isYes: return
         self.settings.clear()
         self._loadAppSettings()
@@ -502,9 +515,9 @@ def runApp(startMinimized = False) -> int:
     try:
         awcc = AWCCThermal()
     except NoAWCCWMIClass:
-        errorExit("AWCC WMI class not found in the system.", "You don't have some drivers installed or your system is not supported.")
+        errorExit("AWCC WMI类在系统中找不到", "您没有安装某些驱动程序或您的系统不受支持")
     except CannotInstAWCCWMI:
-        errorExit("Couldn't instantiate AWCC WMI class.", "Make sure you're running as Admin.")
+        errorExit("不能使用AWCC WMI类", "确保你以管理员身份运行此程序")
 
     mainWindow = TCC_GUI(awcc)
     mainWindow.setStyleSheet(f"""

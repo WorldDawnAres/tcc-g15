@@ -2,7 +2,7 @@
 # GPLv3
 
 import sys
-from GUI.AppGUI import runApp, errorExit
+from src.GUI.AppGUI import runApp, errorExit
 # from pyuac import main_requires_admin
 
 def createAppLockFile():
